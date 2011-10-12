@@ -1,5 +1,49 @@
 ## coffee -csb
 
+class CharAndSpringList
+  constructor: (@fontSize) ->
+    @chars = []
+    @springPlus = 0
+    @springMinus = 0
+    @charsLength = 0
+    @charsAndSprings = []
+
+  push: (char) ->
+    @charsAndSprings.push(char)
+    switch char.type
+      when 'spring'
+        @springPlus += Math.abs(char.plus)
+        @springMinus -= Math.abs(char.minus)
+      when 'word_propotional'
+        @chars.push(char)
+        @charsLength += char.width
+      else
+        @chars.push(char)
+        @charsLength += @fontSize
+
+  maxLength: ->
+    @charsLength + @springPlus
+  minLength: ->
+    @charsLength + @springMinus
+
+  stretchRatio: (rowSize) ->
+    (rowSize - @charsLength) / (
+      if @charsLength < rowSize
+        @springPlus
+      else
+        @springMinus
+    )
+
+  clone: ->
+    c = new CharAndSpringList(@fontSize)
+    c.chars = @chars.slice()
+    c.springPlus = @springPlus
+    c.springMinus = @springMinus
+    c.charsLength = @charsLength
+    c.charsAndSprings = @charsAndSprings.slice()
+    return c
+
+
 ###
 char: 1トークン，一文字とは限らない
 text: 一連の文字や文字的なものの並び，StringではなくArray
@@ -20,7 +64,7 @@ class JSType
     while(true)
       if m = string.match(/[a-zA-Z]+/)
         if m.index != 0
-          chars = chars.concat stringToArray(string.slice(0, m.index - 1))
+          chars = chars.concat stringToArray(string.slice(0, m.index))
         chars.push @wordToChar(m[0])
         string = string.slice(m.index + m[0].length)
       else
@@ -36,70 +80,87 @@ class JSType
       width: @canvasContext.measureText(word).width
     }
 
+  insertSprings: (chars, plus = 5, minus = 5) ->
+    result = []
+    for c in chars
+      result.push c
+      result.push {
+        type: 'spring'
+        plus: plus
+        minus: minus
+      }
+    result.pop()
+    result
+
   typesetRow: (text, fontSize, rowSize) ->
     last = 0
     cursor = 0
     chars = []
     for c in text
       if c.type == 'word_propotional'
-        if cursor + c.width <= rowSize
-          chars.push {char: c.char, x: cursor}
-          cursor += c.width
-        else
-          break
+        width = c.width
+        char = c.char
       else
-        if cursor + fontSize <= rowSize
-          chars.push {char: c, x: cursor}
-          cursor += fontSize
-        else
-          break
+        width = fontSize
+        char = c
+      if cursor + width <= rowSize
+        chars.push {char: char, x: cursor}
+        cursor += width
+      else
+        break
       last++
     {chars: chars, overflow: text.slice(last)}
 
-  typesetRowWithSpring: (text, fontSize, rowSize) ->
+  proposeRows: (rawChars, rowSize) ->
     last = 0
     cursor = 0
-    cursorMin = 0
-    cursorMax = 0
-    lengthMin = 0
-    lengthMax = 0
-    chars = []
-    for c in text
-      switch c.type
-        when 'word_propotional'
-          if cursor + c.width <= rowSize
-            chars.push {char: c.char, x: cursor}
-            cursor += c.width
-          else
-            break
-        when 'spring'
-          cursorMin += c.plus
-          cursorMax += c.minus
-        else
-          if cursor + fontSize <= rowSize
-            chars.push {char: c, x: cursor}
-            cursor += fontSize
-          else
-            break
-      last++
-
-    # ##################################################
-    while true
-      if cursor + springMin > rowSize
-        #文字減らす処理
-      else if cursor + springMax < rowSize
-        #文字増やす(できる？)
-      else
-        #ぴったりになるように調整
+    charsList = []
+    chars = new CharAndSpringList @fontSize
+    for c in rawChars
+      chars = chars.clone()
+      chars.push(c)
+      if chars.minLength() <= rowSize <= chars.maxLength() && c.type != 'spring'
+        charsList.push chars
+      else if rowSize < chars.minLength()
         break
-    {chars: chars, overflow: text.slice(last)}
+    if charsList.length == 0
+      [chars]
+    else
+      charsList
 
+  choiceRow: (charsList, rowSize) ->
+    charsList.sort((a, b) -> a.stretchRatio(rowSize) - b.stretchRatio(rowSize))[0]
+    
+  ##
+  typesetRowJustify: (chars, rowSize) ->
+    springWidth = rowSize - chars.charsLength
+    cursor = 0
+    row = []
+    for c in chars.chars
+      if c.type == 'word_propotional'
+        width = c.width
+        char = c.char
+      else
+        width = @fontSize
+        char = c
+      row.push {char: char, x: cursor}
+      cursor += width
+      cursor += springWidth / chars.chars.length
+    row
+        
+  typesetRowWithSpring: (rawChars, fontSize, rowSize) ->
+    @fontSize = fontSize
+    charsList = @proposeRows(rawChars, rowSize)
+    chars = @choiceRow(charsList, rowSize)
+    row = @typesetRowJustify(chars, rowSize)
+    {chars: row, overflow: rawChars.slice(chars.charsAndSprings.length)}
+  
   typesetBox: (text, fontSize, lineSpace, rowSize, colSize) ->
     numLine = Math.floor((colSize - fontSize) / (fontSize + lineSpace) + 1)
     box = []
     i = 0
     while i < numLine
-      row = @typesetRow(text, fontSize, rowSize)
+      row = @typesetRowWithSpring(text, fontSize, rowSize)
       for c in row.chars
         c.y = i * (fontSize + lineSpace)
       box.push row.chars
@@ -109,35 +170,6 @@ class JSType
     {box: box, overflow: text}
 
 
-$ ->
-  box = $('.typeset-box')
-  width = box.attr('width')
-  height = box.attr('height')
-  canvas = $('<canvas />')
-  canvas.attr
-    width: '500px'
-    height: '500px'
-    style: 'border: solid 1px #000000;'
-  canvasContext = canvas[0].getContext("2d")
-  canvasContext.font = "15px sans-serif"
-  ###
-  drawChars context, [
-    {char: 'い', x: 20, y: 30}
-    {char: 'ろ', x: 35, y: 30}
-  ]
-  ###
-  #res = typesetBox(['こ','ん','に','ち', reduceWordChar('Taro'), 'は'], 15, 5, 100, 1000)
-  #for row in res.box
-    #drawChars row, 10, 30
-
-  t = new JSType canvasContext
-  chars = t.stringToChars "Web の開発、制作者は少なくとも Safari, Chrome, Firefox のいずれかは使っていると思う。これらのブラウザを使っているならぜひオススメ。毎回の reload から完全に解放されるのはちょっと想像以上にインパクトが大きい。ただ、個人的にはイチオシの LiveReload だけど Windows 環境ではちょっと制限が厳しい。ちゃんと手順に従えば間違いなく動く（1.6については）ので、コスト計算がちゃんとできる人にはぜひ試してもらいたい。"
-  res = t.typesetBox(chars, 15, 5, 120, 1000)
-  for row in res.box
-    t.drawChars row, 10, 60
-
-
-  box.append(canvas)
 
 # vim: set ft=coffee :
 
