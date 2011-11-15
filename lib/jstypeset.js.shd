@@ -34,6 +34,17 @@ class CharAndSpringList
         @springMinus
     )
 
+  makeFuncStretchedWidthOfSpring: (rowSize) ->
+    stretchRatio = @stretchRatio(rowSize)
+    sign = rowSize - @charsLength
+    (spring) ->
+      stretchRatio * (
+        if sign > 0
+          spring.plus
+        else
+          -spring.minus
+      )
+
   clone: ->
     c = new CharAndSpringList(@fontSize)
     c.chars = @chars.slice()
@@ -55,7 +66,6 @@ class JSType
   drawChars: (chars, offsetX = 0, offsetY = 0) ->
     for c in chars
       @canvasContext.fillText(c.char, c.x + offsetX, c.y + offsetY)
-
 
   stringToChars: (string) ->
     stringToArray = (string) -> (c for c in string)
@@ -131,12 +141,14 @@ class JSType
   choiceRow: (charsList, rowSize) ->
     charsList.sort((a, b) -> a.stretchRatio(rowSize) - b.stretchRatio(rowSize))[0]
     
-  ##
   typesetRowJustify: (chars, rowSize) ->
-    springWidth = rowSize - chars.charsLength
+    stretchedWidthOfSpring = chars.makeFuncStretchedWidthOfSpring(rowSize)
     cursor = 0
     row = []
-    for c in chars.chars
+    for c in chars.charsAndSprings
+      if c.type == 'spring'
+        cursor += stretchedWidthOfSpring(c)
+        continue
       if c.type == 'word_propotional'
         width = c.width
         char = c.char
@@ -145,7 +157,6 @@ class JSType
         char = c
       row.push {char: char, x: cursor}
       cursor += width
-      cursor += springWidth / chars.chars.length
     row
         
   typesetRowWithSpring: (rawChars, fontSize, rowSize) ->
